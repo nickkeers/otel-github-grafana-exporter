@@ -22,3 +22,5 @@ jobs:
           grafanaEndpoint: ${{ secrets.GRAFANA_URL }}
           grafanaInstanceID: ${{ secrets.GRAFANA_INSTANCE_ID }}
           grafanaAccessPolicyToken: ${{ secrets.GRAFANA_TOKEN }}
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          otelServiceName: "grafana-exporter-test"

@@ -21,12 +21,9 @@ inputs:
   otelServiceName:
     description: 'OTEL service name'
     required: false
-    
-
-# Define your outputs here.
-outputs:
-  time:
-    description: 'Your output description here'
+  githubToken:
+    description: 'Github auth token'
+    required: true
 
 runs:
   using: node20

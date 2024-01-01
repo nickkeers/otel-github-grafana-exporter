@@ -61991,7 +61991,7 @@ async function createSpansForJobsAndSteps(jobs, tracer, rootSpan) {
         // If the job has steps, create spans for each step
         if (job.steps) {
             const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan);
-            job.steps.forEach(step => {
+            for (const step of job.steps) {
                 const stepSpan = tracer.startSpan(`Step: ${step.name}`, {
                     attributes: {
                         'step.number': step.number,
@@ -62001,7 +62001,7 @@ async function createSpansForJobsAndSteps(jobs, tracer, rootSpan) {
                 }, jobCtx);
                 // End the step span
                 stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined);
-            });
+            }
         }
         // End the job span
         jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined);
@@ -62114,7 +62114,7 @@ function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstan
     const credentials = `${grafanaInstanceID}:${grafanaAccessToken}`;
     const encodedCredentials = Buffer.from(credentials).toString('base64');
     const authHeader = `Basic ${encodedCredentials}`;
-    let exporter = new exporter_trace_otlp_proto_1.OTLPTraceExporter({
+    const exporter = new exporter_trace_otlp_proto_1.OTLPTraceExporter({
         url: grafanaEndpoint,
         headers: {
             Authorization: authHeader

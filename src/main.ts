@@ -4,7 +4,6 @@ import { Resource } from '@opentelemetry/resources'
 import {
   BasicTracerProvider,
   SimpleSpanProcessor,
-  ConsoleSpanExporter,
   SpanExporter
 } from '@opentelemetry/sdk-trace-base'
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
@@ -25,7 +24,6 @@ type ListJobsForWorkflowRunResponse =
   Endpoints['GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs']['response']
 type Job =
   Endpoints['GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs']['response']['data']['jobs'][number]
-type Step = Job['steps'] extends Array<infer R> ? R : never
 
 async function createSpansForJobsAndSteps(
   jobs: Job[],
@@ -52,7 +50,7 @@ async function createSpansForJobsAndSteps(
       if (job.steps) {
         const jobCtx = trace.setSpan(context.active(), jobSpan)
 
-        job.steps.forEach(step => {
+        for (const step of job.steps) {
           const stepSpan = tracer.startSpan(
             `Step: ${step.name}`,
             {
@@ -69,7 +67,7 @@ async function createSpansForJobsAndSteps(
           stepSpan.end(
             step.completed_at ? new Date(step.completed_at) : undefined
           )
-        })
+        }
       }
 
       // End the job span
@@ -223,7 +221,7 @@ function createProvider(
   const encodedCredentials = Buffer.from(credentials).toString('base64')
   const authHeader = `Basic ${encodedCredentials}`
 
-  let exporter: SpanExporter = new OTLPHttpTraceExporter({
+  const exporter: SpanExporter = new OTLPHttpTraceExporter({
     url: grafanaEndpoint,
     headers: {
       Authorization: authHeader
