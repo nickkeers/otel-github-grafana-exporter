@@ -61978,41 +61978,68 @@ const sdk_trace_base_1 = __nccwpck_require__(9253);
 const semantic_conventions_1 = __nccwpck_require__(7275);
 const exporter_trace_otlp_proto_1 = __nccwpck_require__(7859);
 const api_1 = __nccwpck_require__(5163);
-async function createSpansForJobsAndSteps(jobs, tracer, rootSpan) {
-    const parentCtx = api_1.trace.setSpan(api_1.context.active(), rootSpan);
-    await Promise.all(jobs.map(async (job) => {
-        // Create a span for the job
-        const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
-            startTime: job.started_at ? new Date(job.started_at) : undefined,
-            attributes: {
-                'job.id': job.id,
-                'job.status': job.status
-            }
-        }, parentCtx);
-        // If the job has steps, create spans for each step
-        if (job.steps) {
-            const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan);
-            for (const step of job.steps) {
-                const stepSpan = tracer.startSpan(`${step.name}`, {
-                    startTime: step.started_at
-                        ? new Date(step.started_at)
-                        : undefined,
-                    attributes: {
-                        'step.number': step.number,
-                        'step.status': step.status,
-                        'step.started_at': step.started_at
-                            ? step.started_at
+const setSpanStatus = (span, success) => {
+    if (success) {
+        span.setStatus({
+            code: api_1.SpanStatusCode.OK,
+            message: 'OK'
+        });
+    }
+    else {
+        span.setStatus({
+            code: api_1.SpanStatusCode.ERROR,
+            message: 'ERROR'
+        });
+    }
+};
+async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
+    let anyJobError = jobs.some(job => job.conclusion !== 'success');
+    tracer.startActiveSpan('root', async (span) => {
+        const parentCtx = api_1.context.active();
+        span.setStatus({
+            code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
+        });
+        span.setAttributes(rootAttributes);
+        await Promise.all(jobs.map(async (job) => {
+            // Create a span for the job
+            const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
+                startTime: job.started_at ? new Date(job.started_at) : undefined,
+                attributes: {
+                    'job.id': job.id,
+                    'job.status': job.status
+                }
+            }, parentCtx);
+            // set status of job
+            setSpanStatus(jobSpan, job.conclusion === 'success');
+            // If the job has steps, create spans for each step
+            if (job.steps) {
+                const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan);
+                for (const step of job.steps) {
+                    const stepSpan = tracer.startSpan(`${step.name}`, {
+                        startTime: step.started_at
+                            ? new Date(step.started_at)
                             : undefined,
-                        'step.conclusion': step.conclusion ? step.conclusion : undefined
-                    }
-                }, jobCtx);
-                // End the step span
-                stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined);
+                        attributes: {
+                            'step.number': step.number,
+                            'step.status': step.status,
+                            'step.started_at': step.started_at
+                                ? step.started_at
+                                : undefined,
+                            'step.conclusion': step.conclusion
+                                ? step.conclusion
+                                : undefined
+                        }
+                    }, jobCtx);
+                    // set status of step
+                    setSpanStatus(stepSpan, step.conclusion === 'success');
+                    // End the step span
+                    stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined);
+                }
             }
-        }
-        // End the job span
-        jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined);
-    }));
+            // End the job span
+            jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined);
+        }));
+    });
 }
 /**
  * The main function for the action.
@@ -62042,55 +62069,34 @@ async function run() {
         // fetch workflow run details
         const workflowJobsDetails = await fetchWorkflowJobs(octokit, githubContext.repo.owner, githubContext.repo.repo, runId);
         const tracer = provider.getTracer('grafana-exporter');
-        // Start the root span with the given attributes
-        const rootSpan = tracer.startSpan('root', {
-            root: true,
-            startTime: payload.workflow_run.created_at
-                ? new Date(payload.workflow_run.created_at)
-                : undefined,
-            attributes: {
-                'jobs.total_count': workflowJobsDetails.total_count,
-                'workflow_run.id': payload.workflow_run.id,
-                'workflow_run.name': payload.workflow_run.name,
-                'workflow_run.head_sha': payload.workflow_run.head_sha,
-                'workflow_run.repository': payload.workflow_run.repository.full_name,
-                'workflow_run.workflow_id': payload.workflow_run.workflow_id,
-                'workflow_run.run_number': payload.workflow_run.run_number,
-                'workflow_run.run_attempt': payload.workflow_run.run_attempt,
-                'workflow_run.event': payload.workflow_run.event,
-                'workflow_run.status': payload.workflow_run.status,
-                'workflow_run.conclusion': payload.workflow_run.conclusion,
-                'workflow_run.created_at': payload.workflow_run.created_at,
-                'workflow_run.updated_at': payload.workflow_run.updated_at,
-                'workflow_run.url': payload.workflow_run.url,
-                'workflow_run.html_url': payload.workflow_run.html_url,
-                'workflow_run.jobs_url': payload.workflow_run.jobs_url,
-                'workflow_run.logs_url': payload.workflow_run.logs_url,
-                'workflow_run.check_suite_url': payload.workflow_run.check_suite_url,
-                'workflow_run.artifacts_url': payload.workflow_run.artifacts_url,
-                'workflow_run.cancel_url': payload.workflow_run.cancel_url,
-                'workflow_run.rerun_url': payload.workflow_run.rerun_url,
-                'workflow_run.workflow_url': payload.workflow_run.workflow_url,
-                'workflow_run.head_branch': payload.workflow_run.head_branch,
-                'workflow_run.head_repository': payload.workflow_run.head_repository.full_name,
-                'workflow_run.head_repository_url': payload.workflow_run.head_repository.html_url
-            }
-        });
-        if (payload.workflow_run.conclusion === 'success') {
-            // set success
-            rootSpan.setStatus({
-                code: api_1.SpanStatusCode.OK,
-                message: `conclusion: ${payload.workflow_run.conclusion}`
-            });
-        }
-        else {
-            // set error
-            rootSpan.setStatus({
-                code: api_1.SpanStatusCode.ERROR,
-                message: `conclusion: ${payload.workflow_run.conclusion}`
-            });
-        }
-        await createSpansForJobsAndSteps(workflowJobsDetails.jobs, tracer, rootSpan);
+        const rootAttributes = {
+            'jobs.total_count': workflowJobsDetails.total_count,
+            'workflow_run.id': payload.workflow_run.id,
+            'workflow_run.name': payload.workflow_run.name,
+            'workflow_run.head_sha': payload.workflow_run.head_sha,
+            'workflow_run.repository': payload.workflow_run.repository.full_name,
+            'workflow_run.workflow_id': payload.workflow_run.workflow_id,
+            'workflow_run.run_number': payload.workflow_run.run_number,
+            'workflow_run.run_attempt': payload.workflow_run.run_attempt,
+            'workflow_run.event': payload.workflow_run.event,
+            'workflow_run.status': payload.workflow_run.status,
+            'workflow_run.conclusion': payload.workflow_run.conclusion,
+            'workflow_run.created_at': payload.workflow_run.created_at,
+            'workflow_run.updated_at': payload.workflow_run.updated_at,
+            'workflow_run.url': payload.workflow_run.url,
+            'workflow_run.html_url': payload.workflow_run.html_url,
+            'workflow_run.jobs_url': payload.workflow_run.jobs_url,
+            'workflow_run.logs_url': payload.workflow_run.logs_url,
+            'workflow_run.check_suite_url': payload.workflow_run.check_suite_url,
+            'workflow_run.artifacts_url': payload.workflow_run.artifacts_url,
+            'workflow_run.cancel_url': payload.workflow_run.cancel_url,
+            'workflow_run.rerun_url': payload.workflow_run.rerun_url,
+            'workflow_run.workflow_url': payload.workflow_run.workflow_url,
+            'workflow_run.head_branch': payload.workflow_run.head_branch,
+            'workflow_run.head_repository': payload.workflow_run.head_repository.full_name,
+            'workflow_run.head_repository_url': payload.workflow_run.head_repository.html_url
+        };
+        await createSpansForJobsAndSteps(workflowJobsDetails.jobs, tracer, rootAttributes);
     }
     catch (error) {
         // Fail the workflow run if an error occurs
