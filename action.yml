@@ -1,6 +1,6 @@
-name: 'The name of your action here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: 'otel-github-grafana-exporter'
+description: 'Exports traces from Github Actions Workflows to Grafana Cloud'
+author: 'Nick Keers'
 
 # Add your action's branding here. This will appear on the GitHub Marketplace.
 branding:
@@ -9,10 +9,19 @@ branding:
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: 'Your input description here'
+  grafanaEndpoint:
+    description: 'Your Grafana OTLP endpoint'
     required: true
-    default: '1000'
+  grafanaInstanceID:
+    description: 'Your Grafana Cloud Instance ID'
+    required: true
+  grafanaAccessPolicyToken:
+    description: 'Your Grafana Access Policy token'
+    required: true
+  otelServiceName:
+    description: 'OTEL service name'
+    required: false
+    
 
 # Define your outputs here.
 outputs:

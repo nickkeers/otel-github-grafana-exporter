@@ -1,0 +1,24 @@
+on:
+  workflow_run: 
+    workflows: ["Continuous Integration"]
+    types: 
+      - completed
+
+
+jobs:
+  test-action:
+    name: GitHub Actions Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Test Local Action
+        id: test-action
+        uses: ./
+        with:
+          grafanaEndpoint: ${{ secrets.GRAFANA_URL }}
+          grafanaInstanceID: ${{ secrets.GRAFANA_INSTANCE_ID }}
+          grafanaAccessPolicyToken: ${{ secrets.GRAFANA_TOKEN }}
