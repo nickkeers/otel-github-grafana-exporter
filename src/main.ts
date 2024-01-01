@@ -11,11 +11,14 @@ import { WorkflowRunCompletedEvent } from '@octokit/webhooks-types'
 import { OTLPTraceExporter as OTLPHttpTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { Endpoints } from '@octokit/types'
 import {
+  DiagConsoleLogger,
+  DiagLogLevel,
   Span,
   SpanStatusCode,
   Tracer,
   TracerProvider,
   context,
+  diag,
   trace
 } from '@opentelemetry/api'
 
@@ -93,7 +96,10 @@ export async function run(): Promise<void> {
       core.getInput('githubToken') || process.env.GITHUB_TOKEN || ''
     const githubContext = github.context
 
+    core.debug('checking workflow type')
+
     if (githubContext.eventName !== 'workflow_run') {
+      core.setFailed('This action only works with workflow_run events')
       throw new Error('This action only works with workflow_run events')
     }
 
@@ -103,6 +109,7 @@ export async function run(): Promise<void> {
 
     const octokit = github.getOctokit(githubToken)
 
+    core.debug('creating provider')
     const provider = createProvider(
       otelServiceName,
       payload,
@@ -111,6 +118,7 @@ export async function run(): Promise<void> {
       grafanaAccessToken
     )
 
+    core.debug('fetching workflow jobs')
     // fetch workflow run details
     const workflowJobsDetails = await fetchWorkflowJobs(
       octokit,
@@ -188,6 +196,8 @@ const fetchWorkflowJobs = async (
     run_id: runId
   })
 
+  core.debug(`response: ${JSON.stringify(response)}`)
+
   return response.data
 }
 
@@ -216,6 +226,8 @@ function createProvider(
       [SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion
     })
   })
+
+  diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.DEBUG)
 
   const credentials = `${grafanaInstanceID}:${grafanaAccessToken}`
   const encodedCredentials = Buffer.from(credentials).toString('base64')

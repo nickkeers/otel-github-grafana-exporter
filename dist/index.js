@@ -62021,13 +62021,17 @@ async function run() {
         // set up github related things, cast payload to a usable type
         const githubToken = core.getInput('githubToken') || process.env.GITHUB_TOKEN || '';
         const githubContext = github.context;
+        core.debug('checking workflow type');
         if (githubContext.eventName !== 'workflow_run') {
+            core.setFailed('This action only works with workflow_run events');
             throw new Error('This action only works with workflow_run events');
         }
         const payload = githubContext.payload;
         const runId = githubContext.payload.workflow_run.id;
         const octokit = github.getOctokit(githubToken);
+        core.debug('creating provider');
         const provider = createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstanceID, grafanaAccessToken);
+        core.debug('fetching workflow jobs');
         // fetch workflow run details
         const workflowJobsDetails = await fetchWorkflowJobs(octokit, githubContext.repo.owner, githubContext.repo.repo, runId);
         const tracer = provider.getTracer('grafana-exporter');
@@ -62091,6 +62095,7 @@ const fetchWorkflowJobs = async (octokit, owner, repo, runId) => {
         repo,
         run_id: runId
     });
+    core.debug(`response: ${JSON.stringify(response)}`);
     return response.data;
 };
 function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstanceID, grafanaAccessToken) {
@@ -62111,6 +62116,7 @@ function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstan
             [semantic_conventions_1.SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion
         })
     });
+    api_1.diag.setLogger(new api_1.DiagConsoleLogger(), api_1.DiagLogLevel.DEBUG);
     const credentials = `${grafanaInstanceID}:${grafanaAccessToken}`;
     const encodedCredentials = Buffer.from(credentials).toString('base64');
     const authHeader = `Basic ${encodedCredentials}`;

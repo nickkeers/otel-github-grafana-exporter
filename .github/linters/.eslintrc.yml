@@ -33,6 +33,14 @@ extends:
   - plugin:@typescript-eslint/recommended
   - plugin:github/recommended
   - plugin:jest/recommended
+  - plugin:import/typescript
+
+settings:
+  'import/resolver':
+    typescript:
+      alwaysTryTypes: true
+      project: './tsconfig.json'
+      
 
 rules:
   {
