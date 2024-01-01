@@ -58,12 +58,16 @@ async function createSpansForJobsAndSteps(
           const stepSpan = tracer.startSpan(
             `${step.name}`,
             {
-              startTime: step.started_at ? new Date(step.started_at) : undefined,
+              startTime: step.started_at
+                ? new Date(step.started_at)
+                : undefined,
               attributes: {
                 'step.number': step.number,
                 'step.status': step.status,
-                'step.started_at': step.started_at ? step.started_at : undefined,
-                'step.conclusion': step.conclusion ? step.conclusion : undefined,
+                'step.started_at': step.started_at
+                  ? step.started_at
+                  : undefined,
+                'step.conclusion': step.conclusion ? step.conclusion : undefined
               }
             },
             jobCtx
