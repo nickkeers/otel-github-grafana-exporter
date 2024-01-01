@@ -138,6 +138,7 @@ export async function run(): Promise<void> {
 
     // Start the root span with the given attributes
     const rootSpan = tracer.startSpan('root', {
+      root: true,
       attributes: {
         'jobs.total_count': workflowJobsDetails.total_count,
         'workflow_run.id': payload.workflow_run.id,

@@ -62044,6 +62044,7 @@ async function run() {
         const tracer = provider.getTracer('grafana-exporter');
         // Start the root span with the given attributes
         const rootSpan = tracer.startSpan('root', {
+            root: true,
             attributes: {
                 'jobs.total_count': workflowJobsDetails.total_count,
                 'workflow_run.id': payload.workflow_run.id,
