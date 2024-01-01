@@ -62045,6 +62045,9 @@ async function run() {
         // Start the root span with the given attributes
         const rootSpan = tracer.startSpan('root', {
             root: true,
+            startTime: payload.workflow_run.created_at
+                ? new Date(payload.workflow_run.created_at)
+                : undefined,
             attributes: {
                 'jobs.total_count': workflowJobsDetails.total_count,
                 'workflow_run.id': payload.workflow_run.id,
