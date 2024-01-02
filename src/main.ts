@@ -15,7 +15,6 @@ import {
   DiagConsoleLogger,
   DiagLogLevel,
   Span,
-  SpanKind,
   SpanStatusCode,
   Tracer,
   TracerProvider,
@@ -44,79 +43,71 @@ const setSpanStatus = (span: Span, success: boolean) => {
   }
 }
 
+async function processSteps(steps: any[], tracer: Tracer, jobCtx: any): Promise<void> {
+  for (const step of steps) {
+    const stepSpan = tracer.startSpan(step.name, {
+      startTime: step.started_at ? new Date(step.started_at) : undefined,
+      attributes: {
+        'step.number': step.number,
+        'step.status': step.status,
+        'step.started_at': step.started_at ? step.started_at : undefined,
+        'step.conclusion': step.conclusion ? step.conclusion : undefined
+      }
+    }, jobCtx);
+
+    // set status of step
+    setSpanStatus(stepSpan, step.conclusion === 'success');
+
+    // End the step span
+    stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined);
+  }
+}
+
+async function processJob(job: Job, tracer: Tracer, parentCtx: any): Promise<void> {
+  // Create a span for the job
+  const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
+    startTime: job.started_at ? new Date(job.started_at) : undefined,
+    attributes: {
+      'job.id': job.id,
+      'job.status': job.status
+    }
+  }, parentCtx);
+
+  // set status of job
+  setSpanStatus(jobSpan, job.conclusion === 'success');
+
+  // If the job has steps, create spans for each step
+  if (job.steps) {
+    const jobCtx = trace.setSpan(context.active(), jobSpan);
+    processSteps(job.steps, tracer, jobCtx);
+  }
+
+  // End the job span
+  jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined);
+}
+
+
+
 async function createSpansForJobsAndSteps(
   jobs: Job[],
   tracer: Tracer,
   rootAttributes: Attributes
 ): Promise<void> {
-  let anyJobError = jobs.some(job => job.conclusion !== 'success')
+  let anyJobError = jobs.some(job => job.conclusion !== 'success');
 
-  tracer.startActiveSpan('root', async (span: Span) => {
-    const parentCtx = context.active()
+  await tracer.startActiveSpan('root', async (span: Span) => {
+    const parentCtx = context.active();
     span.setStatus({
       code: anyJobError ? SpanStatusCode.ERROR : SpanStatusCode.OK
-    })
+    });
 
-    span.setAttributes(rootAttributes)
+    span.setAttributes(rootAttributes);
 
-    await Promise.all(
-      jobs.map(async job => {
-        // Create a span for the job
-        const jobSpan = tracer.startSpan(
-          `Job: ${job.name}`,
-          {
-            startTime: job.started_at ? new Date(job.started_at) : undefined,
-            attributes: {
-              'job.id': job.id,
-              'job.status': job.status
-            }
-          },
-          parentCtx
-        )
-
-        // set status of job
-        setSpanStatus(jobSpan, job.conclusion === 'success')
-
-        // If the job has steps, create spans for each step
-        if (job.steps) {
-          const jobCtx = trace.setSpan(context.active(), jobSpan)
-
-          for (const step of job.steps) {
-            const stepSpan = tracer.startSpan(
-              `${step.name}`,
-              {
-                startTime: step.started_at
-                  ? new Date(step.started_at)
-                  : undefined,
-                attributes: {
-                  'step.number': step.number,
-                  'step.status': step.status,
-                  'step.started_at': step.started_at
-                    ? step.started_at
-                    : undefined,
-                  'step.conclusion': step.conclusion
-                    ? step.conclusion
-                    : undefined
-                }
-              },
-              jobCtx
-            )
-
-            // set status of step
-            setSpanStatus(stepSpan, step.conclusion === 'success')
-
-            // End the step span
-            stepSpan.end(
-              step.completed_at ? new Date(step.completed_at) : undefined
-            )
-          }
-        }
-
-        // End the job span
-        jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined)
-      })
-    )
-  })
+    await Promise.all(jobs.map(job => processJob(job, tracer, parentCtx)
+      .catch(error => {
+        console.error(`Failed processing job ${job.name} - ${error}`);
+      })));
+  });
 }
 
 /**
@@ -140,7 +131,7 @@ export async function run(): Promise<void> {
 
     if (githubContext.eventName !== 'workflow_run') {
       core.setFailed('This action only works with workflow_run events')
-      throw new Error('This action only works with workflow_run events')
+      return
     }
 
     const payload: WorkflowRunCompletedEvent =
@@ -266,7 +257,6 @@ function createProvider(
       Authorization: authHeader
     }
   })
-  // let exporter: SpanExporter = new ConsoleSpanExporter();
 
   traceProvider.addSpanProcessor(new SimpleSpanProcessor(exporter))
   traceProvider.register()
