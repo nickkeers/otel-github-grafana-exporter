@@ -1,6 +1,6 @@
 on:
   workflow_run: 
-    workflows: ["Continuous Integration"]
+    workflows: ["Continuous Integration", "Trace Tester"]
     types: 
       - completed
 
