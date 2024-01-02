@@ -61970,7 +61970,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.run = void 0;
+      exports.run = exports.removeUndefinedProperties = exports.handleJobsAndSteps = exports.processJob = exports.processSteps = exports.setSpanStatus = void 0
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const resources_1 = __nccwpck_require__(3871);
@@ -61992,57 +61992,135 @@ const setSpanStatus = (span, success) => {
         });
     }
 };
+      exports.setSpanStatus = setSpanStatus
 
       async function processSteps(steps, tracer, jobCtx) {
         for (const step of steps) {
-          const stepSpan = tracer.startSpan(step.name, {
-            startTime: step.started_at ? new Date(step.started_at) : undefined,
-            attributes: {
+          tracer.startActiveSpan(step.name, {
+            startTime: step.started_at ? new Date(step.started_at) : undefined
+          }, jobCtx, span => {
+            span.setAttributes(removeUndefinedProperties({
               'step.number': step.number,
               'step.status': step.status,
               'step.started_at': step.started_at ? step.started_at : undefined,
               'step.conclusion': step.conclusion ? step.conclusion : undefined
-            }
-          }, jobCtx)
-          // set status of step
-          setSpanStatus(stepSpan, step.conclusion === 'success')
-          // End the step span
-          stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined)
+            }));
+            // set status of step
+            (0, exports.setSpanStatus)(span, step.conclusion === 'success')
+            // End the step span
+            span.end(step.completed_at ? new Date(step.completed_at) : undefined)
+          })
         }
       }
 
+      exports.processSteps = processSteps
+
       async function processJob(job, tracer, parentCtx) {
-        // Create a span for the job
-        const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
+        // Using startActiveSpan to ensure context is passed between children
+        await tracer.startActiveSpan(`Job: ${job.name}`, {
           startTime: job.started_at ? new Date(job.started_at) : undefined,
           attributes: {
             'job.id': job.id,
             'job.status': job.status
           }
-        }, parentCtx)
+        }, parentCtx, async (span) => {
         // set status of job
-        setSpanStatus(jobSpan, job.conclusion === 'success')
+          (0, exports.setSpanStatus)(span, job.conclusion === 'success')
         // If the job has steps, create spans for each step
-        if (job.steps) {
-          const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan)
-          processSteps(job.steps, tracer, jobCtx)
-        }
-        // End the job span
-        jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined)
+          if (job.steps && Array.isArray(job.steps)) {
+            // span now represents active span
+            const jobCtx = api_1.trace.setSpan(api_1.context.active(), span)
+            await processSteps(job.steps, tracer, jobCtx)
+          }
+          span.end(job.completed_at ? new Date(job.completed_at) : undefined)
+        });
       }
 
-      async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
-        let anyJobError = jobs.some(job => job.conclusion !== 'success')
-        await tracer.startActiveSpan('root', async (span) => {
-          const parentCtx = api_1.context.active()
-          span.setStatus({
-            code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
-          })
-          span.setAttributes(rootAttributes)
-          await Promise.all(jobs.map(job => processJob(job, tracer, parentCtx).catch(error => {
+      exports.processJob = processJob
+
+      async function handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob) {
+        const anyJobError = jobs.some(job => job.conclusion !== 'success')
+        const parentCtx = api_1.context.active()
+        span.setStatus({
+          code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
+        })
+        span.setAttributes(removeUndefinedProperties(rootAttributes))
+        await Promise.all(jobs.map(async (job) => {
+          try {
+            await processJob(job, tracer, parentCtx)
+          } catch (error) {
             console.error(`Failed processing job ${job.name} - ${error}`)
-          })))
+          }
+        }))
+        // end the span on the last completed jobs time
+        const completedJobs = jobs.filter(job => job.status === 'completed')
+        const lastCompletedJob = completedJobs.reduce((prev, current) => prev.completed_at > current.completed_at ? prev : current)
+        span.end(lastCompletedJob.completed_at
+          ? new Date(lastCompletedJob.completed_at)
+          : undefined)
+      }
+
+      exports.handleJobsAndSteps = handleJobsAndSteps
+
+      async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
+        await tracer.startActiveSpan('root', async (span) => {
+          await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
+        })
+      }
+
+// utilities
+      function removeUndefinedProperties(obj) {
+        return Object.entries(obj).reduce((acc, [key, value]) => {
+          if (value !== undefined) {
+            acc[key] = value
+          }
+          return acc
+        }, {})
+      }
+
+      exports.removeUndefinedProperties = removeUndefinedProperties
+// Define the function to fetch workflow jobs details with a specific return type
+      const fetchWorkflowJobs = async (octokit, owner, repo, runId) => {
+        const response = await octokit.rest.actions.listJobsForWorkflowRun({
+          owner,
+          repo,
+          run_id: runId
+        })
+        core.debug(`response: ${JSON.stringify(response)}`)
+        return response.data
+      }
+
+      function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstanceID, grafanaAccessToken) {
+        const serviceName = otelServiceName || payload.workflow_run.name
+        const serviceInstanceId = [
+          payload.workflow_run.repository.full_name,
+          payload.workflow_run.workflow_id,
+          payload.workflow_run.id,
+          payload.workflow_run.run_attempt
+        ].join('/')
+        const serviceNamespace = payload.workflow_run.repository.full_name
+        const serviceVersion = payload.workflow_run.head_sha
+        const traceProvider = new sdk_trace_base_1.BasicTracerProvider({
+          resource: new resources_1.Resource({
+            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_NAME]: serviceName,
+            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_INSTANCE_ID]: serviceInstanceId,
+            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_NAMESPACE]: serviceNamespace,
+            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion
+          })
     });
+        api_1.diag.setLogger(new api_1.DiagConsoleLogger(), api_1.DiagLogLevel.DEBUG)
+        const credentials = `${grafanaInstanceID}:${grafanaAccessToken}`
+        const encodedCredentials = Buffer.from(credentials).toString('base64')
+        const authHeader = `Basic ${encodedCredentials}`
+        const exporter = new exporter_trace_otlp_proto_1.OTLPTraceExporter({
+          url: grafanaEndpoint,
+          headers: {
+            Authorization: authHeader
+          }
+        })
+        traceProvider.addSpanProcessor(new sdk_trace_base_1.SimpleSpanProcessor(exporter))
+        traceProvider.register()
+        return traceProvider
 }
 /**
  * The main function for the action.
@@ -62108,48 +62186,6 @@ async function run() {
     }
 }
 exports.run = run;
-// Define the function to fetch workflow jobs details with a specific return type
-const fetchWorkflowJobs = async (octokit, owner, repo, runId) => {
-    const response = await octokit.rest.actions.listJobsForWorkflowRun({
-        owner,
-        repo,
-        run_id: runId
-    });
-    core.debug(`response: ${JSON.stringify(response)}`);
-    return response.data;
-};
-function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstanceID, grafanaAccessToken) {
-    const serviceName = otelServiceName || payload.workflow_run.name;
-    const serviceInstanceId = [
-        payload.workflow_run.repository.full_name,
-        payload.workflow_run.workflow_id,
-        payload.workflow_run.id,
-        payload.workflow_run.run_attempt
-    ].join('/');
-    const serviceNamespace = payload.workflow_run.repository.full_name;
-    const serviceVersion = payload.workflow_run.head_sha;
-    const traceProvider = new sdk_trace_base_1.BasicTracerProvider({
-        resource: new resources_1.Resource({
-            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_INSTANCE_ID]: serviceInstanceId,
-            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_NAMESPACE]: serviceNamespace,
-            [semantic_conventions_1.SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion
-        })
-    });
-    api_1.diag.setLogger(new api_1.DiagConsoleLogger(), api_1.DiagLogLevel.DEBUG);
-    const credentials = `${grafanaInstanceID}:${grafanaAccessToken}`;
-    const encodedCredentials = Buffer.from(credentials).toString('base64');
-    const authHeader = `Basic ${encodedCredentials}`;
-    const exporter = new exporter_trace_otlp_proto_1.OTLPTraceExporter({
-        url: grafanaEndpoint,
-        headers: {
-            Authorization: authHeader
-        }
-    });
-    traceProvider.addSpanProcessor(new sdk_trace_base_1.SimpleSpanProcessor(exporter));
-    traceProvider.register();
-    return traceProvider;
-}
 
 
 /***/ }),
