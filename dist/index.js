@@ -32557,7 +32557,7 @@ class BasicTracerProvider {
             return list;
         }, []);
         if (validPropagators.length === 0) {
-            return;
+
         }
         else if (uniquePropagatorNames.length === 1) {
             return validPropagators[0];
@@ -60247,7 +60247,7 @@ class ByteParser extends Writable {
       }
 
       if (this.#byteOffset > 0) {
-        continue
+
       } else {
         callback()
         break
@@ -61992,53 +61992,56 @@ const setSpanStatus = (span, success) => {
         });
     }
 };
-async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
-    let anyJobError = jobs.some(job => job.conclusion !== 'success');
-    tracer.startActiveSpan('root', async (span) => {
-        const parentCtx = api_1.context.active();
-        span.setStatus({
-            code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
-        });
-        span.setAttributes(rootAttributes);
-        await Promise.all(jobs.map(async (job) => {
-            // Create a span for the job
-            const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
-                startTime: job.started_at ? new Date(job.started_at) : undefined,
-                attributes: {
-                    'job.id': job.id,
-                    'job.status': job.status
-                }
-            }, parentCtx);
-            // set status of job
-            setSpanStatus(jobSpan, job.conclusion === 'success');
-            // If the job has steps, create spans for each step
-            if (job.steps) {
-                const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan);
-                for (const step of job.steps) {
-                    const stepSpan = tracer.startSpan(`${step.name}`, {
-                        startTime: step.started_at
-                            ? new Date(step.started_at)
-                            : undefined,
-                        attributes: {
-                            'step.number': step.number,
-                            'step.status': step.status,
-                            'step.started_at': step.started_at
-                                ? step.started_at
-                                : undefined,
-                            'step.conclusion': step.conclusion
-                                ? step.conclusion
-                                : undefined
-                        }
-                    }, jobCtx);
-                    // set status of step
-                    setSpanStatus(stepSpan, step.conclusion === 'success');
-                    // End the step span
-                    stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined);
-                }
+
+      async function processSteps(steps, tracer, jobCtx) {
+        for (const step of steps) {
+          const stepSpan = tracer.startSpan(step.name, {
+            startTime: step.started_at ? new Date(step.started_at) : undefined,
+            attributes: {
+              'step.number': step.number,
+              'step.status': step.status,
+              'step.started_at': step.started_at ? step.started_at : undefined,
+              'step.conclusion': step.conclusion ? step.conclusion : undefined
             }
-            // End the job span
-            jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined);
-        }));
+          }, jobCtx)
+          // set status of step
+          setSpanStatus(stepSpan, step.conclusion === 'success')
+          // End the step span
+          stepSpan.end(step.completed_at ? new Date(step.completed_at) : undefined)
+        }
+      }
+
+      async function processJob(job, tracer, parentCtx) {
+        // Create a span for the job
+        const jobSpan = tracer.startSpan(`Job: ${job.name}`, {
+          startTime: job.started_at ? new Date(job.started_at) : undefined,
+          attributes: {
+            'job.id': job.id,
+            'job.status': job.status
+          }
+        }, parentCtx)
+        // set status of job
+        setSpanStatus(jobSpan, job.conclusion === 'success')
+        // If the job has steps, create spans for each step
+        if (job.steps) {
+          const jobCtx = api_1.trace.setSpan(api_1.context.active(), jobSpan)
+          processSteps(job.steps, tracer, jobCtx)
+        }
+        // End the job span
+        jobSpan.end(job.completed_at ? new Date(job.completed_at) : undefined)
+      }
+
+      async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
+        let anyJobError = jobs.some(job => job.conclusion !== 'success')
+        await tracer.startActiveSpan('root', async (span) => {
+          const parentCtx = api_1.context.active()
+          span.setStatus({
+            code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
+          })
+          span.setAttributes(rootAttributes)
+          await Promise.all(jobs.map(job => processJob(job, tracer, parentCtx).catch(error => {
+            console.error(`Failed processing job ${job.name} - ${error}`)
+          })))
     });
 }
 /**
@@ -62058,7 +62061,7 @@ async function run() {
         core.debug('checking workflow type');
         if (githubContext.eventName !== 'workflow_run') {
             core.setFailed('This action only works with workflow_run events');
-            throw new Error('This action only works with workflow_run events');
+          return
         }
         const payload = githubContext.payload;
         const runId = githubContext.payload.workflow_run.id;
@@ -62143,7 +62146,6 @@ function createProvider(otelServiceName, payload, grafanaEndpoint, grafanaInstan
             Authorization: authHeader
         }
     });
-    // let exporter: SpanExporter = new ConsoleSpanExporter();
     traceProvider.addSpanProcessor(new sdk_trace_base_1.SimpleSpanProcessor(exporter));
     traceProvider.register();
     return traceProvider;
