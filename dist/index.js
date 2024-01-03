@@ -62052,15 +62052,6 @@ const setSpanStatus = (span, success) => {
             console.error(`Failed processing job ${job.name} - ${error}`)
           }
         }))
-        // end the span on the last completed jobs time
-        const completedJobs = jobs.filter(job => job.status === 'completed')
-        const lastCompletedJob = completedJobs.reduce((prev, current) => ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
-        ((current.completed_at && Date.parse(current.completed_at)) || 0)
-          ? prev
-          : current)
-        span.end(lastCompletedJob.completed_at
-          ? new Date(lastCompletedJob.completed_at)
-          : undefined)
       }
 
       exports.handleJobsAndSteps = handleJobsAndSteps
@@ -62071,7 +62062,17 @@ const setSpanStatus = (span, success) => {
           startTime: new Date(startTime)
         }, api_1.ROOT_CONTEXT, async (span) => {
           await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
-        })
+          // end the span on the last completed jobs time
+          const completedJobs = jobs.filter(job => job.status === 'completed')
+          const lastCompletedJob = completedJobs.reduce((prev, current) => ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
+          ((current.completed_at && Date.parse(current.completed_at)) || 0)
+            ? prev
+            : current)
+          api_1.diag.debug(`completed at: ${lastCompletedJob.completed_at}`)
+          span.end(lastCompletedJob.completed_at
+            ? new Date(lastCompletedJob.completed_at)
+            : undefined)
+        });
       }
 // utilities
       function removeUndefinedProperties(obj) {

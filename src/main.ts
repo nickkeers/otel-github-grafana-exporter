@@ -139,20 +139,6 @@ export async function handleJobsAndSteps(
       }
     })
   )
-
-  // end the span on the last completed jobs time
-  const completedJobs = jobs.filter(job => job.status === 'completed')
-  const lastCompletedJob = completedJobs.reduce((prev, current) =>
-    ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
-    ((current.completed_at && Date.parse(current.completed_at)) || 0)
-      ? prev
-      : current
-  )
-  span.end(
-    lastCompletedJob.completed_at
-      ? new Date(lastCompletedJob.completed_at)
-      : undefined
-  )
 }
 
 async function createSpansForJobsAndSteps(
@@ -170,6 +156,22 @@ async function createSpansForJobsAndSteps(
     ROOT_CONTEXT,
     async (span: Span): Promise<void> => {
       await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
+      // end the span on the last completed jobs time
+      const completedJobs = jobs.filter(job => job.status === 'completed')
+      const lastCompletedJob = completedJobs.reduce((prev, current) =>
+        ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
+        ((current.completed_at && Date.parse(current.completed_at)) || 0)
+          ? prev
+          : current
+      )
+
+      diag.debug(`completed at: ${lastCompletedJob.completed_at}`)
+
+      span.end(
+        lastCompletedJob.completed_at
+          ? new Date(lastCompletedJob.completed_at)
+          : undefined
+      )
     }
   )
 }
