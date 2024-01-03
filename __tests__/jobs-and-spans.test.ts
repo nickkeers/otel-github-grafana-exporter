@@ -10,30 +10,50 @@ import { WorkflowStep } from '@octokit/webhooks-types'
 
 jest.mock('@opentelemetry/api')
 
-const span = {
-  end: jest.fn(),
-  setStatus: jest.fn(),
-  setAttributes: jest.fn()
+class MockSpan implements Span {
+  end: jest.Mock
+  setStatus: jest.Mock
+  setAttributes: jest.Mock
+  spanContext: jest.Mock
+  setAttribute: jest.Mock
+  addEvent: jest.Mock
+  updateName: jest.Mock
+  isRecording: jest.Mock
+  recordException: jest.Mock
+
+  constructor() {
+    this.end = jest.fn()
+    this.setStatus = jest.fn()
+    this.setAttributes = jest.fn()
+    this.spanContext = jest.fn()
+    this.setAttribute = jest.fn()
+    this.addEvent = jest.fn()
+    this.updateName = jest.fn()
+    this.isRecording = jest.fn()
+    this.recordException = jest.fn()
+  }
 }
 
-const startActiveSpan = jest
-  .fn()
-  .mockImplementation((name, options, context, callback) => {
-    // Check if the callback is presented and is a function
-    const cb = typeof context === 'function' ? context : callback
-
-    if (cb) {
-      return cb(span)
-    }
-
-    return span
-  })
-
-const tracer = {
-  startActiveSpan
-} as unknown as Tracer
-
 describe('processSteps', () => {
+  const span = new MockSpan()
+
+  const startActiveSpan = jest
+    .fn()
+    .mockImplementation((name, options, context, callback) => {
+      // Check if the callback is presented and is a function
+      const cb = typeof context === 'function' ? context : callback
+
+      if (cb) {
+        return cb(span)
+      }
+
+      return span
+    })
+
+  const tracer = {
+    startActiveSpan
+  } as unknown as Tracer
+
   afterEach(() => {
     jest.clearAllMocks()
   })
@@ -64,6 +84,25 @@ describe('processSteps', () => {
 })
 
 describe('processJob', () => {
+  const span = new MockSpan()
+
+  const startActiveSpan = jest
+    .fn()
+    .mockImplementation((name, options, context, callback) => {
+      // Check if the callback is presented and is a function
+      const cb = typeof context === 'function' ? context : callback
+
+      if (cb) {
+        return cb(span)
+      }
+
+      return span
+    })
+
+  const tracer = {
+    startActiveSpan
+  } as unknown as Tracer
+
   afterEach(() => {
     jest.clearAllMocks()
   })
@@ -101,12 +140,7 @@ describe('processJob', () => {
 
 describe('handleJobsAndSteps', () => {
   // Create a mock Span Object
-  const span = {
-    end: jest.fn(),
-    setStatus: jest.fn(),
-    setAttributes: jest.fn()
-    // include other functions as needed
-  } as unknown as Span
+  const span = new MockSpan()
 
   const startActiveSpan = jest
     .fn()
@@ -149,7 +183,7 @@ describe('handleJobsAndSteps', () => {
       head_branch: 'main',
       check_run_url: '',
       created_at: '2023-01-01T00:00:00Z',
-      steps: <WorkflowStep[]>[
+      steps: [
         {
           name: 'step1',
           number: 1,
@@ -160,23 +194,22 @@ describe('handleJobsAndSteps', () => {
         }
       ]
     }
-  ] // Add initialization for Job array
-  let rootAttributes: Record<string, number | string | undefined> = {
+  ]
+
+  const rootAttributes: Record<string, number | string | undefined> = {
     'workflow.attempt': 1
   }
-
-  beforeEach(() => {
-    const rootAttributes: Record<string, number | string | undefined> = {}
-  })
 
   it('should set span status and attributes', async () => {
     await handleJobsAndSteps(tracer, span, jobs, rootAttributes, jest.fn())
 
     const isAnyJobError = jobs.some(job => job.conclusion !== 'success')
 
-    expect(span.setStatus).toHaveBeenCalledWith({
-      code: isAnyJobError ? SpanStatusCode.ERROR : SpanStatusCode.OK
-    })
+    expect(span.setStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: isAnyJobError ? SpanStatusCode.ERROR : SpanStatusCode.OK
+      })
+    )
 
     expect(span.setAttributes).toHaveBeenCalledWith(
       removeUndefinedProperties(rootAttributes)
@@ -184,10 +217,12 @@ describe('handleJobsAndSteps', () => {
   })
 
   it('should process all jobs', async () => {
-    const processJobMock = jest.fn().mockImplementation(() => Promise.resolve())
+    const processJobMock = jest
+      .fn()
+      .mockImplementation(async () => Promise.resolve())
     await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJobMock)
 
-    expect(processJobMock).toBeCalledTimes(jobs.length) // here we're not checking context
+    expect(processJobMock).toHaveBeenCalledTimes(jobs.length) // here we're not checking context
   })
 
   it('should end span', async () => {
@@ -195,7 +230,8 @@ describe('handleJobsAndSteps', () => {
 
     const completedJobs = jobs.filter(job => job.status === 'completed')
     const lastCompletedJob = completedJobs.reduce((prev, current) =>
-      prev.completed_at! > current.completed_at! ? prev : current
+      // @ts-expect-error non-null assertion, but we mock these completed_at's, so we know they exist here
+      prev.completed_at > current.completed_at ? prev : current
     )
     const expectedEndTime = lastCompletedJob.completed_at
       ? new Date(lastCompletedJob.completed_at)

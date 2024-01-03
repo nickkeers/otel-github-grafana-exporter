@@ -19,6 +19,7 @@ import {
   diag,
   DiagConsoleLogger,
   DiagLogLevel,
+  ROOT_CONTEXT,
   Span,
   SpanStatusCode,
   trace,
@@ -113,8 +114,12 @@ export async function handleJobsAndSteps(
   span: Span,
   jobs: Job[],
   rootAttributes: Record<string, number | string | undefined>,
-  processJob: (job: Job, tracer: Tracer, parentCtx: Context) => Promise<void>
-) {
+  processJobFn: (
+    jobF: Job,
+    tracerF: Tracer,
+    parentCtxF: Context
+  ) => Promise<void>
+): Promise<void> {
   const anyJobError = jobs.some(job => job.conclusion !== 'success')
 
   const parentCtx = context.active()
@@ -128,7 +133,7 @@ export async function handleJobsAndSteps(
   await Promise.all(
     jobs.map(async job => {
       try {
-        await processJob(job, tracer, parentCtx)
+        await processJobFn(job, tracer, parentCtx)
       } catch (error) {
         console.error(`Failed processing job ${job.name} - ${error}`)
       }
@@ -138,7 +143,10 @@ export async function handleJobsAndSteps(
   // end the span on the last completed jobs time
   const completedJobs = jobs.filter(job => job.status === 'completed')
   const lastCompletedJob = completedJobs.reduce((prev, current) =>
-    prev.completed_at! > current.completed_at! ? prev : current
+    ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
+    ((current.completed_at && Date.parse(current.completed_at)) || 0)
+      ? prev
+      : current
   )
   span.end(
     lastCompletedJob.completed_at
@@ -148,13 +156,22 @@ export async function handleJobsAndSteps(
 }
 
 async function createSpansForJobsAndSteps(
+  startTime: string,
   jobs: Job[],
   tracer: Tracer,
   rootAttributes: Record<string, number | string | undefined>
 ): Promise<void> {
-  await tracer.startActiveSpan('root', async (span: Span): Promise<void> => {
-    await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
-  })
+  await tracer.startActiveSpan(
+    'root',
+    {
+      root: true,
+      startTime: new Date(startTime)
+    },
+    ROOT_CONTEXT,
+    async (span: Span): Promise<void> => {
+      await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
+    }
+  )
 }
 
 // utilities
@@ -316,7 +333,11 @@ export async function run(): Promise<void> {
         payload.workflow_run.head_repository.html_url
     }
 
+    const startTime =
+      payload.workflow_run.run_started_at || payload.workflow_run.created_at
+
     await createSpansForJobsAndSteps(
+      startTime,
       workflowJobsDetails.jobs,
       tracer,
       rootAttributes

@@ -62009,7 +62009,7 @@ const setSpanStatus = (span, success) => {
             (0, exports.setSpanStatus)(span, step.conclusion === 'success')
             // End the step span
             span.end(step.completed_at ? new Date(step.completed_at) : undefined)
-          })
+          });
         }
       }
 
@@ -62038,7 +62038,7 @@ const setSpanStatus = (span, success) => {
 
       exports.processJob = processJob
 
-      async function handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob) {
+      async function handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJobFn) {
         const anyJobError = jobs.some(job => job.conclusion !== 'success')
         const parentCtx = api_1.context.active()
         span.setStatus({
@@ -62047,14 +62047,17 @@ const setSpanStatus = (span, success) => {
         span.setAttributes(removeUndefinedProperties(rootAttributes))
         await Promise.all(jobs.map(async (job) => {
           try {
-            await processJob(job, tracer, parentCtx)
+            await processJobFn(job, tracer, parentCtx)
           } catch (error) {
             console.error(`Failed processing job ${job.name} - ${error}`)
           }
         }))
         // end the span on the last completed jobs time
         const completedJobs = jobs.filter(job => job.status === 'completed')
-        const lastCompletedJob = completedJobs.reduce((prev, current) => prev.completed_at > current.completed_at ? prev : current)
+        const lastCompletedJob = completedJobs.reduce((prev, current) => ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
+        ((current.completed_at && Date.parse(current.completed_at)) || 0)
+          ? prev
+          : current)
         span.end(lastCompletedJob.completed_at
           ? new Date(lastCompletedJob.completed_at)
           : undefined)
@@ -62062,12 +62065,14 @@ const setSpanStatus = (span, success) => {
 
       exports.handleJobsAndSteps = handleJobsAndSteps
 
-      async function createSpansForJobsAndSteps(jobs, tracer, rootAttributes) {
-        await tracer.startActiveSpan('root', async (span) => {
+      async function createSpansForJobsAndSteps(startTime, jobs, tracer, rootAttributes) {
+        await tracer.startActiveSpan('root', {
+          root: true,
+          startTime: new Date(startTime)
+        }, api_1.ROOT_CONTEXT, async (span) => {
           await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
         })
       }
-
 // utilities
       function removeUndefinedProperties(obj) {
         return Object.entries(obj).reduce((acc, [key, value]) => {
@@ -62117,7 +62122,7 @@ const setSpanStatus = (span, success) => {
           headers: {
             Authorization: authHeader
           }
-        })
+        });
         traceProvider.addSpanProcessor(new sdk_trace_base_1.SimpleSpanProcessor(exporter))
         traceProvider.register()
         return traceProvider
@@ -62177,7 +62182,8 @@ async function run() {
             'workflow_run.head_repository': payload.workflow_run.head_repository.full_name,
             'workflow_run.head_repository_url': payload.workflow_run.head_repository.html_url
         };
-        await createSpansForJobsAndSteps(workflowJobsDetails.jobs, tracer, rootAttributes);
+      const startTime = payload.workflow_run.run_started_at || payload.workflow_run.created_at
+      await createSpansForJobsAndSteps(startTime, workflowJobsDetails.jobs, tracer, rootAttributes)
     }
     catch (error) {
         // Fail the workflow run if an error occurs
