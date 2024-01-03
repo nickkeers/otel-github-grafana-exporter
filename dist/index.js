@@ -62024,15 +62024,20 @@ const setSpanStatus = (span, success) => {
             'job.status': job.status
           }
         }, parentCtx, async (span) => {
-        // set status of job
-          (0, exports.setSpanStatus)(span, job.conclusion === 'success')
-        // If the job has steps, create spans for each step
-          if (job.steps && Array.isArray(job.steps)) {
-            // span now represents active span
-            const jobCtx = api_1.trace.setSpan(api_1.context.active(), span)
-            await processSteps(job.steps, tracer, jobCtx)
+          try {
+            // set status of job
+            (0, exports.setSpanStatus)(span, job.conclusion === 'success')
+            // If the job has steps, create spans for each step
+            if (job.steps && Array.isArray(job.steps)) {
+              // span now represents active span
+              const jobCtx = api_1.trace.setSpan(api_1.context.active(), span)
+              await processSteps(job.steps, tracer, jobCtx)
+            }
+          } catch (e) {
+            core.setFailed(`Failed to process job ${job.name}`)
+          } finally {
+            span.end(job.completed_at ? new Date(job.completed_at) : undefined)
           }
-          span.end(job.completed_at ? new Date(job.completed_at) : undefined)
         });
       }
 
@@ -62040,14 +62045,14 @@ const setSpanStatus = (span, success) => {
 
       async function handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJobFn) {
         const anyJobError = jobs.some(job => job.conclusion !== 'success')
-        const parentCtx = api_1.context.active()
         span.setStatus({
           code: anyJobError ? api_1.SpanStatusCode.ERROR : api_1.SpanStatusCode.OK
         })
         span.setAttributes(removeUndefinedProperties(rootAttributes))
         await Promise.all(jobs.map(async (job) => {
           try {
-            await processJobFn(job, tracer, parentCtx)
+            const ctx = api_1.trace.setSpan(api_1.ROOT_CONTEXT, span)
+            await processJobFn(job, tracer, ctx)
           } catch (error) {
             console.error(`Failed processing job ${job.name} - ${error}`)
           }
@@ -62061,18 +62066,23 @@ const setSpanStatus = (span, success) => {
           root: true,
           startTime: new Date(startTime)
         }, api_1.ROOT_CONTEXT, async (span) => {
-          await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
-          // end the span on the last completed jobs time
-          const completedJobs = jobs.filter(job => job.status === 'completed')
-          const lastCompletedJob = completedJobs.reduce((prev, current) => ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
-          ((current.completed_at && Date.parse(current.completed_at)) || 0)
-            ? prev
-            : current)
-          api_1.diag.debug(`completed at: ${lastCompletedJob.completed_at}`)
-          span.end(lastCompletedJob.completed_at
-            ? new Date(lastCompletedJob.completed_at)
-            : undefined)
-        });
+          try {
+            await handleJobsAndSteps(tracer, span, jobs, rootAttributes, processJob)
+          } catch (e) {
+            core.setFailed(`Failed to parse jobs and steps: ${e}`)
+          } finally {
+            // end the span on the last completed jobs time
+            const completedJobs = jobs.filter(job => job.status === 'completed')
+            const lastCompletedJob = completedJobs.reduce((prev, current) => ((prev.completed_at && Date.parse(prev.completed_at)) || 0) >
+            ((current.completed_at && Date.parse(current.completed_at)) || 0)
+              ? prev
+              : current)
+            api_1.diag.debug(`completed at: ${lastCompletedJob.completed_at}`)
+            span.end(lastCompletedJob.completed_at
+              ? new Date(lastCompletedJob.completed_at)
+              : undefined)
+          }
+        })
       }
 // utilities
       function removeUndefinedProperties(obj) {
