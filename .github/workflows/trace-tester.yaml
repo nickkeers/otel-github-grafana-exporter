@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Dummy step 1
         run: echo "Dummy step 1 completed."
       - name: Dummy step 2
@@ -20,7 +20,7 @@ jobs:
     needs: job1
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Dummy step 1
         run: sleep 3 && echo "Dummy step 1 completed."
       - name: Dummy step 2
